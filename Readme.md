@@ -17,8 +17,7 @@ Data is publicly available at [https://registry.opendata.aws/amazon-reviews/]
 
 # Data Pipeline
 
-
-
+![alt text](/images/datapipline.png)
 
 
 Data Flow from various tools as follows:
@@ -29,6 +28,7 @@ Data Flow from various tools as follows:
   - Tables are created in Redshift with similar schema as that of CSV files.
   - SQL/T copies all the files in S3 into reshift.
   - Dash is used for  Web applications.
- 
+  
+  
 ### Presentation link
  Link to the presentation :   [Ampliyfz](https://docs.google.com/presentation/d/160TNlNY0xZC9PjaZhpJ-dyUDK5l86CZv35HrqPLn1J8/edit#slide=id.p1)
