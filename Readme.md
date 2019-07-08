@@ -17,7 +17,7 @@ Data is publicly available at [https://registry.opendata.aws/amazon-reviews/]
 
 # Data Pipeline
 
-![Alt text](images/datapipeline.PNG?raw=true "Overview of Data Pipeline")
+![Overview of Data Pipeline](images/datapipeline.PNG)
 
 
 Data Flow from various tools as follows:
