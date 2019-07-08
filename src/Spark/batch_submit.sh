@@ -1,0 +1,1 @@
+spark-submit --master spark://ip-10-0-0-13.ec2.internal:7077 batch_processor.py

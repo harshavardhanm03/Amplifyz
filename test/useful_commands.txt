@@ -1,0 +1,489 @@
+CREATE  TABLE product_trends2(
+  product_title varchar(40),
+  review_date date,
+  avg_star_rating integer,
+  no_of_purchases integer not null,
+  helpful_votes_day integer,
+  total_votes integer,
+  reviews varchar(3000) not null
+)
+
+
+reviews=reviews.withColumn("product_title_no_punc",lower(trim(regexp_replace('product_title','[^A-Za-z0-9 ]+',''))))
+
+copy product_trends
+from 's3://amazonreviewsanalysis/part-00000-7fff8c03-5503-4fd3-8cc8-e1a0cdf24f08-c000.csv' 
+access_key_id 'AKIAY3JZ3M7GIHUNADC6'
+secret_access_key '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'
+delimiter ','
+IGNOREHEADER 1
+REMOVEQUOTES
+DATEFORMAT 'auto'
+;
+
+
+
+copy product_trends2
+from 's3://amazonreviewsanalysis/part-00000-be38f435-9f5c-4c8b-9d2e-18147ad6fb1d-c000.csv' 
+access_key_id 'AKIAY3JZ3M7GIHUNADC6'
+secret_access_key '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'
+delimiter ','
+IGNOREHEADER 1
+REMOVEQUOTES
+DATEFORMAT 'auto'
+ACCEPTINVCHARS 
+;
+
+
+copy product_trends2
+from 's3://amazonreviewsanalysis/part-00000-7fff8c03-5503-4fd3-8cc8-e1a0cdf24f08-c000.csv' 
+access_key_id 'AKIAY3JZ3M7GIHUNADC6'
+secret_access_key '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'
+delimiter ','
+IGNOREHEADER 1
+REMOVEQUOTES
+ACCEPTANYDATE
+NULL AS 'null_string'
+IGNOREBLANKLINES 
+BLANKSASNULL 
+ACCEPTINVCHARS
+DATEFORMAT 'auto'
+;COMMIT;
+
+
+copy product_trends
+from 's3://amazonreviewsanalysis' 
+access_key_id 'AKIAY3JZ3M7GIHUNADC6'
+secret_access_key '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'
+delimiter ',';
+
+
+select
+    *  
+from
+    pg_catalog."stl_load_errors" limit 10;
+
+
+
+from pyspark.sql import SparkSession, SQLContext
+from pyspark.sql import functions as f
+from pyspark.sql.functions import regexp_replace, trim, col, lower
+import boto3
+spark = SparkSession.builder.master("spark://ec2-34-206-0-125.compute-1.amazonaws.com:7077").appName("amazon-insights").config("spark.executor.memory", "6gb").getOrCreate()
+departments=[]
+s3= boto3.client('s3')
+response = s3.list_objects_v2(Bucket='amazonreviewsinsight', Delimiter='/')
+obj=response.get('CommonPrefixes')
+for obj in response.get('CommonPrefixes'):
+     department = str(obj.get('Prefix')).replace("product_category=", "")
+     departments.append(department)
+
+#reviews = sqlContext.read.parquet('s3a://amazonreviewsinsight/product_category=Electronics/*')
+
+reviews = sqlContext.read.parquet('s3a://amazonreviewsinsight/product_category='+departments[0])
+reviews=reviews.filter(reviews.marketplace=='US')
+reviews=reviews.drop('marketplace','product_id','customer_id','review_id','product_parent','vine','review_headline')
+reviews=reviews.groupby('product_title','review_date').agg(f.mean('star_rating').alias('avg_star_rating_daily'),f.count('product_title').alias('no_of_purchases'),f.sum('helpful_votes').alias('helpful_votes_in_day'),f.sum('total_votes').alias('total_votes_in_day'),f.collect_list('review_body').alias("daily_text_review"))
+
+
+
+reviews=reviews.groupby('product_title','review_date').agg(f.mean('star_rating').alias('avg_star_rating_daily'),f.sum('helpful_votes').alias('helpful_votes_in_day'),f.sum('total_votes').alias('total_votes_in_day'),f.collect_list('review_body').alias("year_text_review"))
+
+reviews=reviews.withColumn("daily_reviews",f.concat_ws(",","daily_text_review"))
+reviews=reviews.drop('daily_text_review')
+
+
+#Redshift
+
+copy test
+from 's3://amazonreviewsanalysis/electonics.csv/part-00000-6d93ec14-7758-4845-8223-1f639db7455a-c000.csv' 
+iam_role 'arn:aws:iam::608396077004:role/aws-service-role/redshift.amazonaws.com/AWSServiceRoleForRedshift';
+
+url="jdbc:redshift://amazon.cpe3nnjoxfg1.us-east-1.redshift.amazonaws.com:5439/amazon?user=harsha&password=Harsha9652#:5439/database?user=harsha&password=Harsha9652#"
+
+#To read data from Redshift
+df=spark.read.format("com.databricks.spark.redshift").option("url",url).option("dbtable", "dash").option("tempdir","s3a://amazonreviewsanalysis/").load()
+
+#To write data to redshift
+reviews.write.format("com.databricks.spark.redshift").option("url",url).option("dbtable","test").option("tempdir","s3a://amazonreviewsanalysis/").option(""aws_iam_role"","arn:aws:iam::608396077004:role/aws-service-role/redshift.amazonaws.com/AWSServiceRoleForRedshift").mode("append").save()
+
+
+
+CREATE TABLE my_table
+USING com.databricks.spark.redshift
+OPTIONS (
+  dbtable 'my_table',
+  tempdir 's3a://amazonreviewsanalysis/
+  url 'jdbc:redshift://redshifthost:5439/database?user=username&password=pass'
+)
+AS SELECT * FROM tabletosave;
+
+
+
+#Mysql 
+
+
+
+
+
+
+
+reviews.show()
+DB_HOST ='testdb.cpduu4tray8i.us-east-1.rds.amazonaws.com'
+DB_PORT = 3306
+DB_USER ="harsha"
+DB_PASSWD ="Harsha9652#"
+DB_NAME ="sparkjobs"
+import MySQLdb
+mydb = MySQLdb.connect(host = DB_HOST,port = DB_PORT,user = DB_USER,passwd= DB_PASSWD,db= DB_NAME)
+mycursor = mydb.cursor()
+sql="INSERT INTO reviews(review_year,customer_id)(2001,"10345")"
+mycursor.execute(sql)
+
+
+
+
+
+
+
+
+
+
+for department in departments:
+    reviews = sqlContext.read.parquet('s3a://amazonreviewsinsight/product_category='+department/*)
+    print(department)
+    reviews=reviews.withColumn("review_text_lenght",f.length('review_body'))
+    reviews=reviews.drop('vine')
+    reviews=reviews.drop('product_parent')	
+    
+
+
+
+
+#main query
+reviews=reviews.groupby('product_title','year').agg(f.avg('star_rating').alias('star_ratings'),f.sum('helpful_votes').alias('helpful_votes'),f.sum('total_votes').alias('total_votes'),f.collect_list('review_body').alias('review_body'))
+
+
+ reviews = sqlContext.read.parquet('s3a://amazonreviewsinsight/product_category='+departments[0]) 
+ review_year=reviews.groupby('product_title','year').agg(f.sum('total_votes').alias('total_votes_in_year'),f.sum('helpful_votes').alias('helpful_votes_in_year'),f.collect_list('review_body').alias("year_text_review"),f.round(f.mean('star_rating').alias('year_avg_rating'),2)).show()
+
+
+reviews=reviews.withColumn("Yearly_Reviews",f.concat_ws(",","review_body"))
+
+
+
+
+____________
+List of commands that will be useful
+aws s3 ls
+aws s3 cp sourcebukcetname destination
+aws s3 cp sourcebukcetname destination -- recursive
+
+
+
+
+
+
+
+
+_________________
+
+
+avg_ratings_based_on_market
+
+avg_rating = spark.sql("select marketplace,cast(avg(cast(star_rating as decimal(5,4))) as decimal (3,2)) avg_rating,count(*) from amazon_products  group by 1 order by 1")
+
+
+chnage_over_ratiing
+change_rating=spark.sql("select year,cast(avg(cast(star_rating as decimal(5,4))) as decimal (3,2)) avg_rating, count(*) from amazon_products group by 1 order by 1")
+
+products_ratings_variations=spark.sql(select product_category, cast(avg(cast(star_rating as decimal(5,4))) as decimal (3,2)) avg_rating, count(*) from amazon_products group by 1 order by 2);
+
+star_ratings_helpfulness=spark.sql("select star_rating,cast(avg(cast (helpful_votes as decimal (18,4))) as decimal (16,2)) AVG_HELP, count(*) from opt_reviews group by 1 order by 1");
+
+
+import mysql.connector
+cnx = mysql.connector.connect(user='harsha', password='Harsha9652#',host='10.0.0.7',port='3306',database='amazon_reviews')
+
+ cnx = mysql.connector.connect(user='avinash', password='avinash',host='10.0.0.7',port='3306',database='sparkjobs')
+
+
+
+myDB = MySQLdb.connect(host="10.0.0.7",port=3306,user="Harsha",passwd="",db="amazon_reviews")
+
+cnx = mysql.connector.connect(user='harsha', password='Harsha9652#',host='10.0.0.7',database='amazon_reviews')
+
+cHandler = myDB.cursor()
+
+
+ 
+
+
+
+
+products = df.groupby("product_id", "product_title").agg(F.collect_list("star_rating").alias("ratings"), f.collect_list("review_date").alias("review_dates"))
+df.groupby("product_title",month('review_date')).avg('star_rating').show()
+df.groupby("product_title").avg('star_rating').show()
+df.groupby("product_title").mean().show()
+
+SHOW GLOBAL VARIABLES LIKE 'PORT';
+
+mydb = mysql.connector.connect(host="10.0.0.7",port="3306",user="root",passwd="root")
+
+
+
+#---------------
+cp /home/ubuntu/mysql-connector-java-5.1.45/mysql-connector-java-5.1.45-bin.jar /usr/local/spark/jars
+
+mysql -h testdb.cpduu4tray8i.us-east-1.rds.amazonaws.com -u "harsha" -p
+
+
+
+
+#----------------------------#
+
+from pyspark.sql import SQLContext,SparkSession
+from pyspark.sql import functions as f
+import boto3
+DB_HOST ='testdb.cpduu4tray8i.us-east-1.rds.amazonaws.com'
+DB_PORT = 3306
+DB_USER ="harsha"
+DB_PASSWD ="Harsha9652#"
+DB_NAME ="sparkjobs"
+import MySQLdb
+mydb = MySQLdb.connect(host = DB_HOST,port = DB_PORT,user = DB_USER,passwd= DB_PASSWD,db= DB_NAME)
+mycursor = mydb.cursor()
+spark = SparkSession.builder.master("spark://ec2-34-206-0-125.compute-1.amazonaws.com:7077").appName("amazon-insights").config("spark.executor.memory", "6gb").config("spark.jars","/usr/local/spark/jars/mysql-connector-java-5.1.45-bin.jar").getOrCreate()
+
+spark = SparkSession.builder.master("spark://ec2-34-206-0-125.compute-1.amazonaws.com:7077").appName("amazon-insights").config("spark.executor.memory", "6gb").enableHiveSupport().getOrCreate()
+
+
+jdbcURL ="jdbc:redshift://amazon.cpe3nnjoxfg1.us-east-1.redshift.amazonaws.com:5439/amazon"
+
+s3TempDir = ""s3://amazonreviewsanalysis/"
+
+
+reviews.write.format("com.databricks.spark.redshift").option("jdbcurl", jdbcURL).option("dbtable","customers").save()
+  .option("aws_iam_role", "arn:aws:iam::<AWS-account>:role/<redshift-role>")
+  .option("tempdir", s3TempDir)
+  .mode("error")
+  
+
+
+df = spark.read.format("com.databricks.spark.redshift").option("url", "jdbc:redshift://redshifthost:5439/database?user=username&password=pass").option("query", "select x, count(*) my_table group by x").option("tempdir", "s3n://path/for/temp/data").load()
+
+
+s3 = boto3.client('s3')
+response = s3.list_objects_v2(Bucket='amazonreviewsinsight', Delimiter='/')
+obj=response.get('CommonPrefixes')
+departments=[]
+for i in range(0,len(obj)):
+	 department=obj[i].get('Prefix').replace('product_category=',"")
+	 departments.append(department)
+
+reviews = sqlContext.read.parquet('s3a://amazonreviewsinsight/product_category='+departments[0])
+#reviews=reviews.select('year','customer_id')
+#reviews=reviews.take(reviews.count())
+reviews=reviews.groupby('product_title','year').agg(f.collect_list('star_rating').alias('star_ratings'),f.collect_list('helpful_votes').alias('helpful_votes'),f.collect_list('total_votes').alias('total_votes'),f.collect_list('review_body').alias('review_body'))
+reviews=reviews.withColumn("Yearly_Reviews",f.concat_ws(",","review_body"))
+reviews=reviews.select('product_title','year','star_ratings','helpful_votes','total_votes','Yearly_Reviews')
+
+
+reviews.write().format("com.databricks.spark.redshift").option("", awsAccessKey)
+
+
+for i in range(0,len(reviews)):
+	review_year=reviews[i][0]
+	customer_id=reviews[i][1]
+        sql='INSERT INTO reviews (review_year,customer_id) VALUES(%s,%s)'
+	mycursor.execute(sql)
+	mydb.commit()
+	mydb.close()
+
+
+redshift+psycopg2://username@host.amazonaws.com:5439/database')Engine(redshift+psycopg2://username@host.amazonaws.com:5439/database
+	
+        
+
+			
+	@app.callback(
+		Output(component_id='product_id', component_property='children'),
+		[Input(component_id='rating-tracker', component_property='value')]
+			)	
+	def update_figure(product):
+		filtered_df=df[df['product_title']==product]
+		return dcc.Graph(
+				id='rating-tracker',
+				figure={
+				'data': [
+					{'x':filtered_df['review_date'].sort_values(), 'y':filtered_df['avg_star_rating_daily'], 'type': 'line'},
+					],
+				'layout': {
+						'title': 'Dash Data Visualization'
+							}
+					}
+				)
+ 
+
+reviews_2000.coalesce(1).write.option("header", "true").csv("s3a://amazonreviewsanalysis/")
+
+[x for x in reviews.toLocalIterator()]
+
+__
+
+reviews=reviews.select('customer_id','year')
+__
+
+reviews=reviews.withColumn("review_text_length",f.length('review_body'))
+
+row_rdd.saveAsNewAPIHadoopFile(
+    path='-', 
+    outputFormatClass="org.elasticsearch.hadoop.mr.EsOutputFormat",
+    keyClass="org.apache.hadoop.io.NullWritable", 
+    valueClass="org.elasticsearch.hadoop.mr.LinkedMapWritable", 
+    conf=es_conf
+)
+
+db = MySQLdb.connect(host="10.0.0.7",user="harsha",passwd="Harsha9652#",db="sparkjobs") 
+
+
+ reviews_rdd = reviews.rdd.map(lambda review: (review["review_id"],json.dumps(review.asDict(), default=str)))
+
+
+
+reviews.write.format("jdbc").options(url="jdbc:mysql://10.0.0.7:3306/sparkjobs",driver = "com.mysql.jdbc.Driver",dbtable = "tutorials_tbl",mode="overwrite",
+user="root",password="root")
+
+reviews.write.jdbc(url="jdbc:mysql:://10.0.0.7:3306/sparkjobs",dtable="tutorials_tbl",mode="append",properties={"driver": "com.mysql.jdbc.Driver","user":harsha,"password":"Harsha9652#"})
+
+
+
+reviews.write.jdbc(url="jdbc:mysql://10.0.0.7:3306",table="tutorials_tbl",mode="overwrite",properties={"driver":"com.mysql.jdbc.Driver","user":"harsha",password:"Harsha9652#"})
+
+jdbc:postgresql://10.0.0.7:5432/test
+
+
+________________
+postgres
+
+
+
+
+DB_HOST ='testdb.cpduu4tray8i.us-east-1.rds.amazonaws.com'
+DB_PORT = 3306
+DB_USER ="harsha"
+DB_PASSWD ="Harsha9652#"
+DB_NAME ="sparkjobs"
+import MySQLdb
+mydb = MySQLdb.connect(host = DB_HOST,port = DB_PORT,user = DB_USER,passwd= DB_PASSWD,db= DB_NAME)
+mycursor = mydb.cursor()
+sql="CREATE TABLE CUSTOMERS2(ID INT NOT NULL)"
+sql='INSERT INTO reviews(review_year,customer_id) VALUES(%s,%s)'
+mycursor.execute(sql)
+
+
+CREATE TABLE years ('year' INT(4) NOT NULL
+,'CUSTOMER_ID' INT(8) NOT NULL);
+
+
+CREATE TABLE dash('product_title' VARCHAR(40),'review_date' DATE
+,'STAR_RATING' INT(8));
+
+reviews.write.jdbc(url="jdbc:mysql:://testdb.cpduu4tray8i.us-east-1.rds.amazonaws.com:3306/sparkjobs",table="reviews",mode="append",properties={"driver": "com.mysql.jdbc.Driver","user":"harsha","password":"Harsha9652#"})
+
+
+
+
+
+spark-submit --master spark://ip-10-0-0-13.ec2.internal:7077 anything.py
+
+
+spark = SparkSession.builder.master("spark://ec2-34-206-0-125.compute-1.amazonaws.com:7077").appName("amazon-insights").config("spark.executor.memory", "6gb").config("spark.jars","/home/ubuntu/").getOrCreate()
+
+
+reviews.write.jdbc(url="jdbc:postgresql://10.0.0.7:5432/test",table="test",mode="append",properties={"driver": "org.postgresql.Driver","user":harsha,"password:"Harsha9652#"})
+
+
+
+reviews.write.format('jdbc').options( url='jdbc:mysql://10.0.0.7:3306/sparkjobs',
+      driver='com.mysql.jdbc.Driver',
+      dbtable='tutorials_tbl',
+      user='harsha',
+      password='Harsha9652#').mode('append').save()
+
+count_products=reviews.groupby('product_id','product_title','year').count()
+avg_rating=reviews.groupby("product_title","year").avg('star_rating','helpful_votes')
+review_product=reviews.groupby('product_title').agg(f.concat_ws(", ", f.collect_list(reviews.review_body)))
+
+count_products.write.csv("s3n://amazonreviewsinsight/test.csv")
+
+reviews.toPandas().to_csv("sample_file.csv", header=True)
+
+
+_________________________
+
+Redshift
+
+
+pyspark --jars /usr/share/aws/redshift/jdbc/RedshiftJDBC4-1.2.1.1001.jar --packages com.databricks:spark-redshift_2.11:2.0.1
+
+
+spark = SparkSession.builder.master("spark://ec2-34-206-0-125.compute-1.amazonaws.com:7077").appName("amazon-insights").config("spark.executor.memory", "6gb").getOrCreate()
+
+jdbcURL ="jdbc:redshift://amazon.cpe3nnjoxfg1.us-east-1.redshift.amazonaws.com:5439/amazon?user=harsha&password=Harsha9652#"
+
+s3TempDir = ""s3://amazonreviewsanalysis/"
+
+
+reviews.write.format("com.databricks.spark.redshift").option("jdbcurl", jdbcURL).option("dbtable","customers").save()
+  .option("aws_iam_role", "arn:aws:iam::<AWS-account>:role/<redshift-role>")
+  .option("tempdir", s3TempDir)
+  .mode("error")
+  
+
+________________
+
+url="jdbc:redshift://amazon.cpe3nnjoxfg1.us-east-1.redshift.amazonaws.com:5439/amazon?user=harsha&password=Harsha9652#"
+df = spark.read.format("com.databricks.spark.redshift").option("url", "jdbc:redshift://redshifthost:5439/database?user=harsha&password=Harsha9652#") .option("dbtable", "customers").option("tempdir", "s3://amazonreviewsanalysis/").load()
+
+
+connection = psycopg2.connect(user = "harsha",password = "Harsha9652#",host = "amazon.cpe3nnjoxfg1.us-east-1.redshift.amazonaws.com",port ="5439",database = "amazon")
+cursor = connection.cursor()
+cur.execute("INSERT INTO customers(, data) VALUES (%s, %s)",(100, "abc'def"))
+
+
+
+df = spark.write.format("com.databricks.spark.redshift").option("url", "jdbc:redshift://amazon.cpe3nnjoxfg1.us-east-1.redshift.amazonaws.com:5439/amazon?user=harsha&password=Harsha9652#").option("query", "select * from dash").option("tempdir", "s3n://AKIAY3JZ3M7GIHUNADC6:v+A/9SzEtDP3oTyXCYQyoxFeYAquaauXLINbMToF@amazonreviewsanalysis/").load()
+
+
+copy = """copy dash  from "s3://amazonreviewsanalysis/test.csv/" 
+ credentials 'AKIAY3JZ3M7GIHUNADC6:v+A/9SzEtDP3oTyXCYQyoxFeYAquaauXLINbMToF
+' 
+ delimiter ',' 
+removequotes 
+ region as 'us-east-1';
+commit;""
+
+
+
+
+
+
+
+
+
+
+
+df_final.write.format("com.spark.redshift").option("forward_spark_s3_credentials", "true").option("url", "Rs_Connection") \
+    .option("user", "root") \
+    .option("password", "PW") \
+    .option("dbtable", "public.spark") \
+    .option("tempdir", "s3n://access_key:screat_key@rtemp_dir_path)\
+    .mode("append")\
+    .save()
+
+
+
+
+
+
