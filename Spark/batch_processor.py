@@ -9,6 +9,7 @@ from  pyspark.sql import SparkSession,SQLContext
 from pyspark.sql import functions as f
 import boto3
 from pyspark.sql.functions import regexp_replace, trim, lower
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 class BatchProcessor(object):
     def __int__(self):
@@ -46,11 +47,24 @@ class BatchProcessor(object):
         cleaned_reviews=cleaned_reviews.withColumn("reviews_text_no_punc",lower(trim(regexp_replace('product_title','[^A-Za-z0-9 ]+',''))))
         cleaned_reviews=cleaned_reviews.drop("daily_text_reviews")
         return cleaned_reviews
+    
+    def sentiment_analyzer(cleaned_reviews):
+        #Identify the polarity of the review and take the compunded postive reviews count
+        analyser = SentimentIntensityAnalyzer()
+        sentences=cleaned_reviews.groupby('product_title','review_date').f.concat_ws(", ", f.collect_list(cleaned_reviews['daily_reviews']))
+        sentences.withColumn(analyser.polarity_scores(sentences))
+        return sentences
+        
+        
             
         
     def write_df(cleaned_reviews):
         #Writing back the dataframe into a new bucket
         cleaned_reviews.coalesce(1).write.option("header", "true").csv("s3a://amazonreviewsanalysis/")
+    
+    def write_sentiments(sentences):        
+        sentences.coalesce(1).write.option("header", "true").csv("s3a://amazonreviews_scores/")
+        
         
     
     def stop_spark(self):
@@ -63,5 +77,8 @@ if __name__=="__main__":
     reviews=sparkjob.sql_read()
     cleaned_reviews=sparkjob.cleaned_reviews(reviews)
     aggregated_reviews=sparkjob.aggregate_job(cleaned_reviews)
+    sentence_aggregated=sparkjob.sentiment_analyzer(cleaned_reviews)
+    sparkjob.write_df(cleaned_reviews)
+    sparkjob.write_sentiments(sentence_aggregated)
     sparkjob.write(aggregated_reviews)
     print('Done')
